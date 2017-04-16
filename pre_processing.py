@@ -60,7 +60,9 @@ def load_data():
     Y = []
     
 
-    for vid_name in os.listdir('test/videos'):
+    videos = [os.listdir('test/videos')[0]]
+
+    for vid_name in videos:
         cap = cv2.VideoCapture('test/videos/'+vid_name)
 
         align_name = vid_name.split('.')[0]
@@ -117,6 +119,15 @@ def load_data():
         for seg in alignments:
             X.append(frames[seg[0]:seg[1],:,:])
             Y.append(seg[2])
+
+    # Build mapping of vocab to number.
+    vocab = {}
+    for i, word in enumerate(set(Y)):
+        vocab[word] = i
+
+    # Map output to numbers.
+    for i, word in enumerate(Y):
+        Y[i] = vocab[word]
     
     # 70% training data
     train_idx = int(len(X)*0.7)
@@ -124,5 +135,6 @@ def load_data():
     X_test = X[train_idx:]
     Y_train = Y[:train_idx]
     Y_test = Y[train_idx:]
+
     
-    return (X_train, Y_train), (X_test, Y_test)
+    return (X_train, Y_train), (X_test, Y_test), vocab
