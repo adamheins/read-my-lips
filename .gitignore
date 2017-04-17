@@ -1,5 +1,4 @@
 lib/
-test/
 data/
 .ipynb*
 *.pyc
