@@ -145,6 +145,11 @@ def load_data(num_words=0, train_fraction=DEFAULT_TRAINING_FRACTION, speaker=Non
 
         data = np.load(data_file)
 
+        # Some videos are corrupted, leading to empty data files. Skip these.
+        if data.shape[0] == 0:
+            print('Skipping empty data file...')
+            continue
+
         x.append(data)
         y.append(word)
 
@@ -239,7 +244,9 @@ def main(speaker):
 # and save them for later.
 if __name__ == '__main__':
     if len(sys.argv) < 2:
-        print('Error: Must specify speaker.')
+        print('Error: Must specify at least one speaker.')
+        print('python pre_processing.py speaker1 [speaker2] ...')
     else:
-        main(sys.argv[1])
+        for speaker in sys.argv[1:]:
+            main(speaker)
 
