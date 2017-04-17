@@ -1,17 +1,26 @@
 #!/usr/bin/env python
+from __future__ import print_function
 
 import os
 import cv2
 import dlib
-import code
 import numpy as np
 
 from keras.preprocessing import image
+from keras.layers import Input
+from keras_vggface.vggface import VGGFace
+
 import matplotlib.pyplot as plt
 
 # LipNet paper specifies 100 x 50 regions centered on the mouth.
 MOUTH_REGION_WIDTH = 100
 MOUTH_REGION_HEIGHT = 50
+
+
+VIDEO_DIRECTORY_PATH = 'test/videos'
+ALIGN_DIRECTORY_PATH = 'test/align'
+FEATURE_DIRECTORY_PATH = 'data/features'
+
 
 # Parse alignment file into list of (start, end, word) tuples.
 def parse_alignment(fp):
@@ -27,98 +36,60 @@ def parse_alignment(fp):
         end = int(round(float(words[1]) / 1000))
 
         segments.append((start, end, words[2]))
-    
+
     num_frames = segments[-1][1] - segments[0][0]
     # exclude first and last (cause it's sil)
     return segments[1:-1], num_frames
 
 
-# Returns a rectangle surrounding the mouth region.
-def get_mouth_rect(img, shape, w, h):
-    # See https://ibug.doc.ic.ac.uk/resources/300-W/ for meaning of different
-    # parts.
-    points = [shape.part(48), shape.part(51), shape.part(54), shape.part(57)]
-    mat = np.matrix([ [p.x, p.y] for p in points ])
-    rect = cv2.boundingRect(mat)
+def process_video(vid_name):
+    cap = cv2.VideoCapture(VIDEO_DIRECTORY_PATH + '/' + vid_name)
 
-    cx = rect[0] + rect[2] / 2
-    cy = rect[1] + rect[3] / 2
+    align_name = vid_name.split('.')[0]
+    alignments, num_frames = parse_alignment(ALIGN_DIRECTORY_PATH + '/' + align_name + '.align')
 
-    top = cy - h / 2
-    bottom = cy + h / 2
-    left = cx - w / 2
-    right = cx + w / 2
+    frames = np.ndarray(shape=(num_frames, 224, 224, 3), dtype=np.float32)
 
-    return img[top:bottom, left:right]
+    frame = 0
+    ret, img = cap.read()
 
+    while ret:
+        x = cv2.resize(img, (224, 224)).astype(np.float32)
 
-def load_data():
-    detector = dlib.get_frontal_face_detector()
-    predictor = dlib.shape_predictor('face_landmarks.dat')
+        x = np.expand_dims(x, axis=0)
+        # Zero-center by mean pixel
+        x[:, :, :, 0] -= 93.5940
+        x[:, :, :, 1] -= 104.7624
+        x[:, :, :, 2] -= 129.1863
 
-    X = []
-    Y = []
-    
+        frames[frame,:,:,:] = x
 
-    videos = [os.listdir('test/videos')[0]]
-
-    for vid_name in videos:
-        cap = cv2.VideoCapture('test/videos/'+vid_name)
-
-        align_name = vid_name.split('.')[0]
-        alignments, num_frames = parse_alignment('test/align/' + align_name + '.align')
-
-        frames = np.ndarray(shape=(num_frames, 224, 224, 3), dtype=np.float32)
-
-        frame = 0
         ret, img = cap.read()
 
-        # for debugging the first frame
-        # return x
+        frame += 1
 
-        while ret:
-            # d = detector(img)[0]
-            # shape = predictor(img, d)
+    # Divide up frames based on mapping to spoken words.
+    word_frames = []
+    output = []
+    for seg in alignments:
+        word_frames.append(frames[seg[0]:seg[1],:,:])
+        output.append(seg[2])
 
-            # grey = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-            # mouth = get_mouth_rect(grey, shape, MOUTH_REGION_WIDTH, MOUTH_REGION_HEIGHT)
+    return word_frames, output
 
-            x = cv2.resize(img, (224, 224)).astype(np.float32)
 
-            x = np.expand_dims(x, axis=0)	
-	    # Zero-center by mean pixel
-            x[:, :, :, 0] -= 93.5940
-            x[:, :, :, 1] -= 104.7624
-            x[:, :, :, 2] -= 129.1863
+def load_data(num_data):
+    X = []
+    Y = []
 
-            # frames[frame,:,:] = mouth[:,:]
-            frames[frame,:,:,:] = x
+    # Get the names of the number of videos we want.
+    videos = os.listdir(VIDEO_DIRECTORY_PATH)[0:num_data]
 
-            ret, img = cap.read()
+    for vid_name in videos:
+        features, output = process_video(vid_name)
 
-            frame += 1
-
-        # cv2.namedWindow('frame')
-
-        # Display deltas.
-        # key = 0
-        # for i in xrange(1, frame):
-        #     # Calculate delta frame. Data type needs to be converted to int16 for
-        #     # the subtraction, to avoid problems with overflow and negatives.
-        #     delta = frames[i,:,:].astype('int16') - frames[i-1,:,:].astype('int16')
-        #     delta = np.absolute(delta).astype('uint8')
-
-        #     cv2.imshow('frame', delta)
-        #     key = cv2.waitKey(40)
-
-        # cv2.destroyAllWindows()
-
-        # group frames with corresponding align word
-        # (start, end, word)
-
-        for seg in alignments:
-            X.append(frames[seg[0]:seg[1],:,:])
-            Y.append(seg[2])
+        X.extend(features)
+        Y.extend(output)
 
     # Build mapping of vocab to number.
     vocab = {}
@@ -128,7 +99,7 @@ def load_data():
     # Map output to numbers.
     for i, word in enumerate(Y):
         Y[i] = vocab[word]
-    
+
     # 70% training data
     train_idx = int(len(X)*0.7)
     X_train = X[:train_idx]
@@ -136,5 +107,5 @@ def load_data():
     Y_train = Y[:train_idx]
     Y_test = Y[train_idx:]
 
-    
     return (X_train, Y_train), (X_test, Y_test), vocab
+
