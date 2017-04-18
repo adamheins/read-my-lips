@@ -18,6 +18,12 @@ FEATURE_DIRECTORY_PATH = 'data/features'
 
 DEFAULT_TRAINING_FRACTION = 0.7
 
+# Number of frames to use for each word.
+NUM_FRAMES = 6
+
+# Number of facial features to use. Maximum is 512.
+NUM_FACIAL_FEATURES = 50
+
 
 # Parse alignment file into list of (start, end, word) tuples.
 def parse_alignment(fp):
@@ -100,7 +106,9 @@ def build_vocab(y):
     # Map output to numbers.
     output_vector = []
     for word in y:
-        output_vector.append(vocab[word])
+        zeros = np.zeros(len(vocab), dtype=np.float32)
+        zeros[vocab[word]] = 1.0
+        output_vector.append(zeros)
 
     return vocab, output_vector
 
@@ -150,7 +158,7 @@ def load_data(num_words=0, train_fraction=DEFAULT_TRAINING_FRACTION, speaker=Non
             print('Skipping empty data file...')
             continue
 
-        x.append(data)
+        x.append(data[:,:NUM_FACIAL_FEATURES])
         y.append(word)
 
     # Build mapping of vocabulary to integers, and remap output to it.
@@ -162,12 +170,34 @@ def load_data(num_words=0, train_fraction=DEFAULT_TRAINING_FRACTION, speaker=Non
         if word.shape[0] > word_max_frames:
             word_max_frames = word.shape[0]
 
-    # Pad features up to maximum number of frames any word has. Padding is
-    # filled with duplicates of the last frame.
+    # Create a mask to remove frames beyond a certain number.
+    mask = np.ones(word_max_frames, dtype=bool)
+    mask[NUM_FRAMES:] = False
+
     for i, f in enumerate(x):
-        last = np.array(f[-1].reshape(1,512))
+        last = np.array(f[-1].reshape(1, NUM_FACIAL_FEATURES))
+
+        # Add padding with duplicates of last frame.
         for _ in xrange(f.shape[0], word_max_frames):
             x[i] = np.concatenate((x[i], last), axis=0)
+
+        # Take deltas.
+        for j in xrange(1, word_max_frames):
+            x[i][j-1,:] = x[i][j,:] - x[i][j-1,:]
+
+        # Apply mask to remove extra frames.
+        x[i] = x[i][mask, ...]
+
+        # Normalize the entire set of frames for this word.
+        norm = np.linalg.norm(x[i])
+        if norm == 0:
+            # If the norm is zero, meaning the vector is zero, we just use an
+            # evenly distributed unit array.
+            ones = np.ones(x[i].shape)
+            x[i] = ones / np.linalg.norm(ones)
+        else:
+            x[i] = x[i] / norm
+
 
     # Split into train and test data sets. This also converts to numpy arrays.
     train, test = split_train_test(x, y, train_fraction)
