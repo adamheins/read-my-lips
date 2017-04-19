@@ -11,6 +11,8 @@ import sys
 from keras.layers import Input
 from keras_vggface.vggface import VGGFace
 
+from vocab import Vocabulary
+
 
 VIDEO_DIRECTORY_PATH = 'data/videos'
 ALIGN_DIRECTORY_PATH = 'data/align'
@@ -22,11 +24,12 @@ DEFAULT_TRAINING_FRACTION = 0.7
 NUM_FRAMES = 6
 
 # Number of facial features to use. Maximum is 512.
-NUM_FACIAL_FEATURES = 50
+NUM_FACIAL_FEATURES = 512
 
 
 # Parse alignment file into list of (start, end, word) tuples.
 def parse_alignment(fp):
+    ''' Parse alignment data for an align file. '''
     with open(fp, 'r') as f:
         lines = f.readlines()
 
@@ -46,6 +49,7 @@ def parse_alignment(fp):
 
 
 def process_video(speaker, vid_name):
+    ''' Split a video into sets of frames corresponding to each spoken word. '''
     video_path = os.path.join(VIDEO_DIRECTORY_PATH, speaker, vid_name)
     align_name = vid_name.split('.')[0] + '.align'
     align_path = os.path.join(ALIGN_DIRECTORY_PATH, speaker, align_name)
@@ -83,25 +87,36 @@ def process_video(speaker, vid_name):
     return word_frames, output
 
 
-def curses_init():
-    stdscr = curses.initscr()
-    stdscr.nodelay(True)
-    curses.noecho()
-    curses.cbreak()
-    return stdscr
-
-
-def curses_clean_up():
-    curses.echo()
-    curses.nocbreak()
-    curses.endwin()
+# class Vocabulary(object):
+#     ''' A two-way mapping between words in our vocabulary and indexes. This
+#         means that one can look up a word by index or an index by word. '''
+#     def __init__(self, words):
+#         self.word_to_index_map = {}
+#         self.index_to_word_map = {}
+#
+#         word_set = set(words)
+#
+#         for index, word in enumerate(word_set):
+#             self.word_to_index_map[word] = index
+#             self.index_to_word_map[index] = word
+#
+#         self.length = len(word_set)
+#
+#
+#     def __len__(self):
+#         return self.length
+#
+#
+#     def __getitem__(self, key):
+#         try:
+#             return self.index_to_word_map[key]
+#         except KeyError:
+#             return self.word_to_index_map[key]
 
 
 def build_vocab(y):
-    # Build mapping of vocab to number.
-    vocab = {}
-    for i, word in enumerate(set(y)):
-        vocab[word] = i
+    ''' Build vocabulary and use it to format labels. '''
+    vocab = Vocabulary(y)
 
     # Map output to numbers.
     output_vector = []
@@ -126,27 +141,72 @@ def split_train_test(x, y, train_fraction):
     return (x_train, y_train), (x_test, y_test)
 
 
-def load_data(num_words=0, train_fraction=DEFAULT_TRAINING_FRACTION, speaker=None):
+def condense_frames(frames, desired_length):
+    ''' Condense a set of frames down to a desired length by averaging
+        neighbouring frames. '''
+
+    # Already at or below desired length, nothing to be done.
+    if len(frames) <= desired_length:
+        return frames
+
+    # We need to get one frame from every cond_ratio frames.
+    cond_ratio = len(frames) * 1.0 / desired_length
+
+    condensed_frames = np.zeros((desired_length, frames.shape[1]), dtype=frames.dtype)
+
+    frame_count = 0.0
+
+    for i in xrange(desired_length):
+        idx = int(frame_count)
+        end_idx = idx + 1
+        weights = [idx + 1 - frame_count]
+
+        # Frames that are contributing fully to this average have a weight of 1.
+        while cond_ratio - sum(weights) >= 1.0:
+            weights.append(1.0)
+            end_idx += 1
+
+        # Account for any remainder.
+        if cond_ratio > sum(weights) + 0.0000001:
+            weights.append(cond_ratio - sum(weights))
+            end_idx += 1
+
+        # Normalize the weights.
+        norm = np.linalg.norm(weights)
+        weights = [w / norm for w in weights]
+
+        condensed_frames[i,:] = np.average(frames[idx:end_idx,:], axis=0, weights=weights)
+
+        frame_count += cond_ratio
+
+    return condensed_frames
+
+
+def load_data(num_words=0, train_fraction=DEFAULT_TRAINING_FRACTION, speakers=[]):
     ''' Load facial feature data from disk. '''
     # If num_words is greater than 0, only that many word files with be used as
     # input. Otherwise, all available will be used.
 
     x = [] # Input
-    y = [] # Desired output
+    y = [] # Labels
 
-    # Select data files to load. If a speaker is selected, only their data
-    # files will be used. Otherwise, data files with be selected from all
-    # speakers.
-    if speaker:
-        data_glob = os.path.join(FEATURE_DIRECTORY_PATH, speaker, '*.npy')
-    else:
+    # Select data files to load. Loads data from speakers specified, or takes
+    # all data is no speakers are specified.
+    if len(speakers) == 0:
         data_glob = os.path.join(FEATURE_DIRECTORY_PATH, '*', '*.npy')
+        data_files = glob.glob(data_glob)
+    else:
+        data_files = []
+        for speaker in speakers:
+            data_glob = os.path.join(FEATURE_DIRECTORY_PATH, speaker, '*.npy')
+            data_files.extend(glob.glob(data_glob))
 
-    data_files = glob.glob(data_glob)
-    if len(data_files) < num_words:
+    # Limit to a certain number of words, if specified.
+    if num_words != 0 and len(data_files) > num_words:
         data_files = data_files[0:num_words]
 
     # Load the data.
+    empty_file_count = 0
     for data_file in data_files:
         name_no_ext = os.path.basename(data_file).split('.')[0]
         word = name_no_ext.split('_')[2]
@@ -155,11 +215,12 @@ def load_data(num_words=0, train_fraction=DEFAULT_TRAINING_FRACTION, speaker=Non
 
         # Some videos are corrupted, leading to empty data files. Skip these.
         if data.shape[0] == 0:
-            print('Skipping empty data file...')
+            empty_file_count += 1
             continue
 
         x.append(data[:,:NUM_FACIAL_FEATURES])
         y.append(word)
+    print('Skipped {} empty data files.'.format(empty_file_count))
 
     # Build mapping of vocabulary to integers, and remap output to it.
     vocab, y = build_vocab(y)
@@ -171,18 +232,21 @@ def load_data(num_words=0, train_fraction=DEFAULT_TRAINING_FRACTION, speaker=Non
             word_max_frames = word.shape[0]
 
     # Create a mask to remove frames beyond a certain number.
-    mask = np.ones(word_max_frames, dtype=bool)
+    # mask = np.ones(word_max_frames, dtype=bool)
+    mask = np.ones(NUM_FRAMES+1, dtype=bool)
     mask[NUM_FRAMES:] = False
 
     for i, f in enumerate(x):
         last = np.array(f[-1].reshape(1, NUM_FACIAL_FEATURES))
 
         # Add padding with duplicates of last frame.
-        for _ in xrange(f.shape[0], word_max_frames):
+        for _ in xrange(f.shape[0], NUM_FRAMES + 1):
             x[i] = np.concatenate((x[i], last), axis=0)
 
+        x[i] = condense_frames(x[i], NUM_FRAMES + 1)
+
         # Take deltas.
-        for j in xrange(1, word_max_frames):
+        for j in xrange(1, NUM_FRAMES + 1):
             x[i][j-1,:] = x[i][j,:] - x[i][j-1,:]
 
         # Apply mask to remove extra frames.
@@ -212,6 +276,21 @@ def progress_msg(stdscr, video_count, word_count, video_name, num_videos):
     stdscr.addstr(2, 0, 'Processing {}...'.format(video_name))
     stdscr.refresh()
 
+
+def curses_init():
+    ''' Initialize curses interface. '''
+    stdscr = curses.initscr()
+    stdscr.nodelay(True)
+    curses.noecho()
+    curses.cbreak()
+    return stdscr
+
+
+def curses_clean_up():
+    ''' Clean up curses interface. '''
+    curses.echo()
+    curses.nocbreak()
+    curses.endwin()
 
 
 def main(speaker):
