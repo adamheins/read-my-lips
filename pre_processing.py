@@ -6,6 +6,7 @@ import curses
 import cv2
 import glob
 import numpy as np
+import random
 import sys
 
 from keras.layers import Input
@@ -179,31 +180,28 @@ def condense_frames(frames, desired_length):
     return condensed_frames
 
 
-def load_data(num_words=0, k=4, speakers=[]):
-    ''' Load facial feature data from disk. '''
-    # If num_words is greater than 0, only that many word files with be used as
-    # input. Otherwise, all available will be used.
+def shuffle_data(x, y):
+    ''' Shuffle the features and labels into a random order. '''
+    r = range(len(x))
+    random.shuffle(r)
 
-    x = [] # Input
+    xr = []
+    yr = []
+
+    for i in xrange(len(x)):
+        idx = r[i]
+        xr.append(x[idx])
+        yr.append(y[idx])
+
+    return xr, yr
+
+
+def load_data_files(data_files, shuffle):
+    ''' Load specified data files into feature and label arrays. '''
+    x = [] # Features
     y = [] # Labels
-
-    # Select data files to load. Loads data from speakers specified, or takes
-    # all data is no speakers are specified.
-    if len(speakers) == 0:
-        data_glob = os.path.join(FEATURE_DIRECTORY_PATH, '*', '*.npy')
-        data_files = glob.glob(data_glob)
-    else:
-        data_files = []
-        for speaker in speakers:
-            data_glob = os.path.join(FEATURE_DIRECTORY_PATH, speaker, '*.npy')
-            data_files.extend(glob.glob(data_glob))
-
-    # Limit to a certain number of words, if specified.
-    if num_words != 0 and len(data_files) > num_words:
-        data_files = data_files[0:num_words]
-
-    # Load the data.
     empty_file_count = 0
+
     for data_file in data_files:
         name_no_ext = os.path.basename(data_file).split('.')[0]
         word = name_no_ext.split('_')[2]
@@ -222,16 +220,45 @@ def load_data(num_words=0, k=4, speakers=[]):
 
         x.append(data[:,:NUM_FACIAL_FEATURES])
         y.append(word)
+
+    # Shuffle the data to randomize its order.
+    if shuffle:
+        x, y = shuffle_data(x, y)
+
+    return x, y, empty_file_count
+
+
+def max_frames(features):
+    ''' Calculate the maximum number of frames any word has. '''
+    max_frames = 0
+    for f in features:
+        if f.shape[0] > max_frames:
+            max_frames = f.shape[0]
+    return max_frames
+
+
+def load_data(k=4, speakers=[], shuffle=False):
+    ''' Load facial feature data from disk. '''
+    # Select data files to load. Loads data from speakers specified, or takes
+    # all data is no speakers are specified.
+    if len(speakers) == 0:
+        data_glob = os.path.join(FEATURE_DIRECTORY_PATH, '*', '*.npy')
+        data_files = glob.glob(data_glob)
+    else:
+        data_files = []
+        for speaker in speakers:
+            data_glob = os.path.join(FEATURE_DIRECTORY_PATH, speaker, '*.npy')
+            data_files.extend(glob.glob(data_glob))
+
+    # Load the data.
+    x, y, empty_file_count = load_data_files(data_files, shuffle)
     print('Skipped {} empty data files.'.format(empty_file_count))
 
     # Build mapping of vocabulary to integers, and remap output to it.
     vocab, y = build_vocab(y)
 
     # Calculate the maximum number of frames any word has.
-    word_max_frames = 0
-    for word in x:
-        if word.shape[0] > word_max_frames:
-            word_max_frames = word.shape[0]
+    word_max_frames = max_frames(x)
 
     # Create a mask to remove frames beyond a certain number.
     # mask = np.ones(word_max_frames, dtype=bool)
@@ -264,6 +291,7 @@ def load_data(num_words=0, k=4, speakers=[]):
         else:
             x[i] = x[i] / norm
 
+    # Convert to numpy arrays.
     x = np.asarray(x)
     y = np.asarray(y)
 
