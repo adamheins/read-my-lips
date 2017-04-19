@@ -237,7 +237,18 @@ def max_frames(features):
     return max_frames
 
 
-def load_data(k=4, speakers=[], shuffle=False):
+def normalize_word_frame(word_frame):
+    ''' Normalize so all values in the set of frames for the word add to one. '''
+    norm = np.linalg.norm(word_frame)
+    if norm == 0:
+        # If the norm is zero, meaning the vector is zero, we just use
+        # an evenly distributed unit array.
+        ones = np.ones(word_frame.shape)
+        return ones / np.linalg.norm(ones)
+    return word_frame / norm
+
+
+def load_data(k=5, speakers=[], shuffle=False, use_delta_frames=True):
     ''' Load facial feature data from disk. '''
     # Select data files to load. Loads data from speakers specified, or takes
     # all data is no speakers are specified.
@@ -260,42 +271,38 @@ def load_data(k=4, speakers=[], shuffle=False):
     # Calculate the maximum number of frames any word has.
     word_max_frames = max_frames(x)
 
-    # Create a mask to remove frames beyond a certain number.
-    # mask = np.ones(word_max_frames, dtype=bool)
-    mask = np.ones(NUM_FRAMES+1, dtype=bool)
-    mask[NUM_FRAMES:] = False
+    # If we're using delta frames, we need to keep an extra frame around to
+    # produce the delta.
+    if use_delta_frames:
+        effective_num_frames = NUM_FRAMES + 1
+    else:
+        effective_num_frames = NUM_FRAMES
 
     for i, f in enumerate(x):
         last = np.array(f[-1].reshape(1, NUM_FACIAL_FEATURES))
 
         # Add padding with duplicates of last frame.
-        for _ in xrange(f.shape[0], NUM_FRAMES + 1):
+        for _ in xrange(f.shape[0], effective_num_frames):
             x[i] = np.concatenate((x[i], last), axis=0)
 
-        x[i] = condense_frames(x[i], NUM_FRAMES + 1)
+        x[i] = condense_frames(x[i], effective_num_frames)
 
-        # Take deltas.
-        for j in xrange(1, NUM_FRAMES + 1):
-            x[i][j-1,:] = x[i][j,:] - x[i][j-1,:]
+        if use_delta_frames:
+            # Take deltas.
+            for j in xrange(1, len(x[i])):
+                x[i][j-1,:] = x[i][j,:] - x[i][j-1,:]
 
-        # Apply mask to remove extra frames.
-        x[i] = x[i][mask, ...]
+            # Remove extra frame from the end.
+            x[i] = x[i][:NUM_FRAMES, ...]
 
         # Normalize the entire set of frames for this word.
-        norm = np.linalg.norm(x[i])
-        if norm == 0:
-            # If the norm is zero, meaning the vector is zero, we just use an
-            # evenly distributed unit array.
-            ones = np.ones(x[i].shape)
-            x[i] = ones / np.linalg.norm(ones)
-        else:
-            x[i] = x[i] / norm
+        x[i] = normalize_word_frame(x[i])
 
     # Convert to numpy arrays.
     x = np.asarray(x)
     y = np.asarray(y)
 
-    # Split into train and test data sets. This also converts to numpy arrays.
+    # Split into train and test data sets, arranged as k folds.
     data = split_train_test(x, y, k)
 
     return data, vocab
