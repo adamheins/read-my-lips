@@ -128,17 +128,40 @@ def build_vocab(y):
     return vocab, output_vector
 
 
-def split_train_test(x, y, train_fraction):
-    ''' Split data into training and testing data sets. '''
-    train_idx = int(len(x) * train_fraction)
+def split_train_test(x, y, k):
+    ''' Split testing and training data k ways to enable k-fold
+        cross-validation. '''
+    interval = int(x.shape[0] / k)
 
-    x_train = np.asarray(x[:train_idx])
-    x_test = np.asarray(x[train_idx:])
+    data = []
+    for i in xrange(1, k):
+        # Create mask for testing section of data.
+        test_mask = np.zeros(x.shape[0], dtype=bool)
+        test_mask[(i-1)*interval:i*interval] = True
 
-    y_train = np.asarray(y[:train_idx])
-    y_test = np.asarray(y[train_idx:])
+        x_test = x[test_mask, ...]
+        y_test = y[test_mask, ...]
+        test = (x_test, y_test)
 
-    return (x_train, y_train), (x_test, y_test)
+        x_train = x[~test_mask, ...]
+        y_train = y[~test_mask, ...]
+        train = (x_train, y_train)
+
+        data.append((train, test))
+
+    # Final interval to the end of the data. Not included in the loop in case
+    # the data set could not be divided evenly into k sections.
+    x_test = x[-interval:, ...]
+    y_test = y[-interval:, ...]
+    test = (x_test, y_test)
+
+    x_train = x[:-interval, ...]
+    y_train = y[:-interval, ...]
+    train = (x_train, y_train)
+
+    data.append((train, test))
+
+    return data
 
 
 def condense_frames(frames, desired_length):
@@ -182,7 +205,7 @@ def condense_frames(frames, desired_length):
     return condensed_frames
 
 
-def load_data(num_words=0, train_fraction=DEFAULT_TRAINING_FRACTION, speakers=[]):
+def load_data(num_words=0, k=4, speakers=[]):
     ''' Load facial feature data from disk. '''
     # If num_words is greater than 0, only that many word files with be used as
     # input. Otherwise, all available will be used.
@@ -262,14 +285,17 @@ def load_data(num_words=0, train_fraction=DEFAULT_TRAINING_FRACTION, speakers=[]
         else:
             x[i] = x[i] / norm
 
+    x = np.asarray(x)
+    y = np.asarray(y)
 
     # Split into train and test data sets. This also converts to numpy arrays.
-    train, test = split_train_test(x, y, train_fraction)
+    data = split_train_test(x, y, k)
 
-    return train, test, vocab
+    return data, vocab
 
 
 def progress_msg(stdscr, video_count, word_count, video_name, num_videos):
+    ''' Display preprocessing progress message. '''
     stdscr.addstr(1, 0, 'Processed {}/{} videos; {} words.'.format(video_count,
                                                                    num_videos,
                                                                    word_count))
@@ -301,6 +327,11 @@ def main(speaker):
     input_tensor = Input(shape=(224, 224, 3))
     vgg_model = VGGFace(input_tensor=input_tensor, include_top=False, pooling='avg')
 
+    # Create the speaker's feature directory if it doesn't already exist.
+    speaker_feature_dir = os.path.join(FEATURE_DIRECTORY_PATH, speaker)
+    if not os.path.isdir(speaker_feature_dir):
+        os.mkdir(speaker_feature_dir)
+
     # Get list of all videos to process.
     video_glob = os.path.join(VIDEO_DIRECTORY_PATH, speaker, '*.mpg')
     video_paths = glob.glob(video_glob)
@@ -331,7 +362,7 @@ def main(speaker):
 
                 # Format of the file name is [video_name]_[word_index]_[word].
                 feature_file_name = '{}_{}_{}'.format(name_no_ext, i, output[i])
-                feature_file_path = os.path.join(FEATURE_DIRECTORY_PATH, speaker, feature_file_name)
+                feature_file_path = os.path.join(speaker_feature_dir, feature_file_name)
 
                 # If the file already exists, we don't want to waste time processing it again.
                 if os.path.isfile(feature_file_path + '.npy'):
