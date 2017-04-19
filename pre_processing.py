@@ -87,42 +87,16 @@ def process_video(speaker, vid_name):
     return word_frames, output
 
 
-# class Vocabulary(object):
-#     ''' A two-way mapping between words in our vocabulary and indexes. This
-#         means that one can look up a word by index or an index by word. '''
-#     def __init__(self, words):
-#         self.word_to_index_map = {}
-#         self.index_to_word_map = {}
-#
-#         word_set = set(words)
-#
-#         for index, word in enumerate(word_set):
-#             self.word_to_index_map[word] = index
-#             self.index_to_word_map[index] = word
-#
-#         self.length = len(word_set)
-#
-#
-#     def __len__(self):
-#         return self.length
-#
-#
-#     def __getitem__(self, key):
-#         try:
-#             return self.index_to_word_map[key]
-#         except KeyError:
-#             return self.word_to_index_map[key]
-
-
-def build_vocab(y):
+def build_vocab(words):
     ''' Build vocabulary and use it to format labels. '''
-    vocab = Vocabulary(y)
+    vocab = Vocabulary(words)
 
-    # Map output to numbers.
+    # Map words to word embedding vectors.
     output_vector = []
-    for word in y:
+    for word in words:
         zeros = np.zeros(len(vocab), dtype=np.float32)
         zeros[vocab[word]] = 1.0
+
         output_vector.append(zeros)
 
     return vocab, output_vector
@@ -239,6 +213,11 @@ def load_data(num_words=0, k=4, speakers=[]):
         # Some videos are corrupted, leading to empty data files. Skip these.
         if data.shape[0] == 0:
             empty_file_count += 1
+            continue
+
+        # 'sp' denotes a pause in speaking. We do not want to treat this as a
+        # word.
+        if word == 'sp':
             continue
 
         x.append(data[:,:NUM_FACIAL_FEATURES])
