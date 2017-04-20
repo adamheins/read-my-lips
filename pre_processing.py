@@ -103,40 +103,38 @@ def build_vocab(words):
     return vocab, output_vector
 
 
-def split_train_test(x, y, k):
+def kfold(x, y, k):
     ''' Split testing and training data k ways to enable k-fold
         cross-validation. '''
     interval = int(x.shape[0] / k)
 
-    data = []
+    masks = []
     for i in xrange(1, k):
         # Create mask for testing section of data.
         test_mask = np.zeros(x.shape[0], dtype=bool)
         test_mask[(i-1)*interval:i*interval] = True
 
-        x_test = x[test_mask, ...]
-        y_test = y[test_mask, ...]
-        test = (x_test, y_test)
-
-        x_train = x[~test_mask, ...]
-        y_train = y[~test_mask, ...]
-        train = (x_train, y_train)
-
-        data.append((train, test))
+        masks.append(test_mask)
 
     # Final interval to the end of the data. Not included in the loop in case
     # the data set could not be divided evenly into k sections.
     x_test = x[-interval:, ...]
     y_test = y[-interval:, ...]
-    test = (x_test, y_test)
+    masks.append(test_mask)
 
-    x_train = x[:-interval, ...]
-    y_train = y[:-interval, ...]
+    return masks
+
+
+def split_train_test(x, y, test_mask):
+    x_train = x[~test_mask, ...]
+    y_train = y[~test_mask, ...]
     train = (x_train, y_train)
 
-    data.append((train, test))
+    x_test = x[test_mask, ...]
+    y_test = y[test_mask, ...]
+    test = (x_test, y_test)
 
-    return data
+    return train, test
 
 
 def condense_frames(frames, desired_length):
@@ -258,6 +256,7 @@ def load_data(k=5, speakers=[], shuffle=False, use_delta_frames=True):
     else:
         data_files = []
         for speaker in speakers:
+            speaker = 's' + str(speaker)
             data_glob = os.path.join(FEATURE_DIRECTORY_PATH, speaker, '*.npy')
             data_files.extend(glob.glob(data_glob))
 
@@ -302,10 +301,10 @@ def load_data(k=5, speakers=[], shuffle=False, use_delta_frames=True):
     x = np.asarray(x)
     y = np.asarray(y)
 
-    # Split into train and test data sets, arranged as k folds.
-    data = split_train_test(x, y, k)
+    # Create masks for k test and training data sets.
+    kmasks = kfold(x, y, k)
 
-    return data, vocab
+    return x, y, kmasks, vocab
 
 
 def progress_msg(stdscr, video_count, word_count, video_name, num_videos):
