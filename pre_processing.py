@@ -6,7 +6,7 @@ import curses
 import cv2
 import glob
 import numpy as np
-import random
+np.random.seed(1337)
 import sys
 
 from keras.layers import Input
@@ -181,7 +181,7 @@ def condense_frames(frames, desired_length):
 def shuffle_data(x, y):
     ''' Shuffle the features and labels into a random order. '''
     r = range(len(x))
-    random.shuffle(r)
+    np.random.shuffle(r)
 
     xr = []
     yr = []
