@@ -19,3 +19,7 @@ Now, all you need to so is run `python pre_processing.py <speaker>` to start
 generating and saving speaker data. You can stop at any time by pressing 'q'
 (it may take a few seconds to exit). You can pick up where you left off because
 the program is smart enough not to reprocess videos it already has data for.
+
+## Results
+The paper describing our process and results can be found
+[here](https://static.adamheins.com/papers/read-my-lips.pdf).
