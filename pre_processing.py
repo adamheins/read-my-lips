@@ -384,7 +384,7 @@ def main(speaker):
                 # Classify the frames and save the features to a file.
                 features = vgg_model.predict(word_frame)
                 np.save(feature_file_path, features)
-    except SystemExit, KeyboardInterrupt:
+    except (SystemExit, KeyboardInterrupt):
         # Expected exceptions are either the generic one raised when a user
         # presses 'q' to exit, or a KeyboardInterrupt if the user gets
         # impatient and presses Ctrl-C.
